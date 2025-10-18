@@ -18,7 +18,6 @@ By merging blockchain’s trust guarantees with UDP’s speed, this innovation o
 
 Current Market Pain: Why BlockUDP SOLVES a $301B Gap
 
-
 Blockchain gaming's hype is real, but tech hurdles (high latency, tampering, scalability) cause 70%+ churn in Web3 titles. Devs need UDP-like speed with blockchain trust. Here are 4 challenges that btcUDP solves:
 
 1) Latency >50ms Kills Fun
@@ -52,6 +51,30 @@ Web2 gaming use: Unity plugin for Fortnite-style games, cutting costs 50% with s
 Benefits: +20% market share with fewer lost players, -80% retransmissions, boosting productivity.
 
 
+How btcUDP works?
+
+1) Send Packet
+
+When a data packet is sent, it gets a nano-header, a tiny piece of metadata added to the packet. This header includes:
+
+* `hash`: An 8-byte Blake3 hash of the packet, ensuring the data can’t be tampered with.
+* `prev`: The hash of the previous packet in the chain, linking packets together like a mini blockchain.
+* `critical`: Marks the packet as important for validation.
+This ensures every packet is verifiable and sequential, preventing tampering or missing data from going unnoticed.
+
+2) Verify on Stacks
+   
+The packet chain is recorded on a Clarity smart contract on Stacks (anchored to Bitcoin). The network checks that each new packet matches the recorded chain. If there’s a mismatch, the sender can be instantly banned from the network. This adds strong security without slowing down packet transmission.
+
+3) Smart Retry
+   
+An AI system (LSTM Network) predicts which packets are likely to be lost or dropped. Instead of blindly resending everything, it selectively retransmits the packets, increasing efficiency. High-stake peers in the network use Proof-of-Stake (PoS) to relay these packets, ensuring that only trusted nodes handle critical retries. This reduces wasted bandwidth and improves reliability.
+
+4) Handover 
+
+Finally, the packets are sent via QUIC, a fast and secure transport protocol, to the Stacks blockchain for finality. This means the network confirms and permanently records the data, completing the transmission securely.
+
+In short, every packet is hashed and linked to the previous one, verified on a blockchain, intelligently retried if lost, and finalized over a high-speed, secure network. The system combines low latency, cryptographic integrity, AI-driven reliability and Bitcoin security to create a fast, tamper-proof networking solution.
 
 
 
