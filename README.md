@@ -1,6 +1,8 @@
 # btcUDP
 A blockchain-powered UDP delivering ultra-fast, tamper-proof networking. It merges UDP’s speed with nano-ledgers (8-byte hashes) and AI-PoS retries for reliability. Built on Stacks, it inherits Bitcoin’s security while ensuring low-latency, verifiable data transmission for next-gen applications.
 
+Why btcUDP?
+
 In traditional networking, the User Datagram Protocol (UDP) is known for its speed and simplicity. It enables fast, connectionless data transfer that’s ideal for gaming, live streaming, and real-time systems. However, UDP lacks built-in reliability and security—packets can be lost, spoofed, or modified without detection. This is why I'm creting btcUDP, a new blockchain-enhanced UDP protocol that wants to change that by combining the raw speed of UDP with the immutability and transparency of blockchain technology. In this case, Stacks blockchain.
 
 This protocol introduces nano-ledgers, lightweight 8-byte hashes embedded within data packets. Each packet carries a cryptographic proof of origin and integrity, creating a tamper-proof record of transmission without slowing down the network. These nano-ledgers act as micro-trust anchors, allowing devices to verify each packet’s authenticity instantly. By adding these lightweight proofs, the system keeps data secure and trusted without slowing down the network.
