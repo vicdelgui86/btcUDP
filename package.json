@@ -1,0 +1,21 @@
+{
+  "name": "blockudp-stacks",
+  "version": "1.0.0",
+  "description": "BlockUDP on Stacks: Secure UDP for Gaming",
+  "main": "src/core/blockudp.js",
+  "scripts": {
+    "deploy": "bash deploy.sh",
+    "demo": "node examples/fortnite-cheat-demo.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@stacks/transactions": "^7.0.0",
+    "blake3": "^2.0.0",
+    "brain.js": "^2.0.0",
+    "quic": "^0.1.0"
+  },
+  "devDependencies": {
+    "clarinet": "^1.0.0",
+    "jest": "^29.0.0"
+  }
+}
