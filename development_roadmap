@@ -38,88 +38,60 @@ Tasks:
 
 Phase 3 – Testing & Simulation
 
-**Goal:** Prove reliability and performance.
-**Tasks:**
+Goal: Prove reliability and performance.
+Tasks:
 
-* [ ] Build local simulator: emulate packet drops, tampering, latency.
-* [ ] Write Jest tests for Clarity contracts.
-* [ ] Benchmark throughput and latency (aim for 10K pkt/sec, 1 ms RTT).
-* [ ] Write a `tests/README.md` summarizing results.
-* [ ] Add GitHub CI to run automatic verification.
+1) Build local simulator: emulate packet drops, tampering, latency.
+2) Write Jest tests for Clarity contracts.
+3) Benchmark throughput and latency (aim for 10K pkt/sec, 1 ms RTT).
+4) Write a `tests/README.md` summarizing results.
+5) Add GitHub CI to run automatic verification.
 
-**Deliverables:**
 
-* `/tests` folder with automated tests
-* Report showing latency, drop-rate, and ban accuracy
+Phase 4 – Documentation & Onboarding
 
----
+Goal: Make it easy for developers to understand and use.
+Tasks:
 
-### **Phase 4 – Documentation & Onboarding (Weeks 9-10)**
+1) Write `/docs/api.md` for JS functions and contract methods.
+2) Create `/examples/README.md` showing how to integrate.
+3) Record short screen demo (gif or mp4) showing packet flow.
+4) Update main README with setup, usage, and diagrams.
 
-**Goal:** Make it easy for developers to understand and use.
-**Tasks:**
 
-* [ ] Write `/docs/api.md` for JS functions and contract methods.
-* [ ] Create `/examples/README.md` showing how to integrate.
-* [ ] Record short screen demo (gif or mp4) showing packet flow.
-* [ ] Update main README with setup, usage, and diagrams.
+Phase 5 – Incentives & Governance 
 
-**Deliverables:**
+Goal: Design sustainable economics for retry nodes and security.
+Tasks:
 
-* Full developer documentation
-* Example integrations runnable locally
-
----
-
-### **Phase 5 – Incentives & Governance (Weeks 11-12)**
-
-**Goal:** Design sustainable economics for retry nodes and security.
-**Tasks:**
-
-* [ ] Write `/docs/tokenomics.md`:
-
+1) Write `/docs/tokenomics.md`:
   * How staking works.
   * How nodes earn fees or are slashed.
-* [ ] Add governance proposal flow to `pos-retry.clar` (optional).
-* [ ] Simulate different stake weights and failure cases.
+2) Add governance proposal flow to `pos-retry.clar` (optional).
+3) Simulate different stake weights and failure cases.
 
-**Deliverables:**
 
-* `tokenomics.md` + improved PoS logic
-* Governance model for node participation
+Phase 6 – Demos & Integrations
 
----
+Goal: Show btcUDP in action.
+Examples:
 
-### **Phase 6 – Demos & Integrations (Weeks 13-14)**
+1. Fortnite-like demo: record and verify headshot packets.
+2. Zoom-like stream: fast UDP for video, retry for key frames.
+3. Web3 game: require sBTC stake to join a match.
+4. IoT demo: drone telemetry verified through nano-ledgers.
+5. FileSync app: transfer files over btcUDP with tamper-proof proofs.
 
-**Goal:** Show btcUDP in action.
-**Examples:**
+Tasks:
 
-1. **Fortnite-like demo:** record and verify headshot packets.
-2. **Zoom-like stream:** fast UDP for video, retry for key frames.
-3. **Web3 game:** require sBTC stake to join a match.
-4. **IoT demo:** drone telemetry verified through nano-ledgers.
-5. **FileSync app:** transfer files over btcUDP with tamper-proof proofs.
+1) Build 2-3 working demos in `/examples/`.
+2) Measure **economic impact** (token cost vs. savings, latency reduction).
+3) Write summary report `/docs/demos.md`.
 
-**Tasks:**
 
-* [ ] Build 2-3 working demos in `/examples/`.
-* [ ] Measure **economic impact** (token cost vs. savings, latency reduction).
-* [ ] Write summary report `/docs/demos.md`.
+Final Goal 
 
-**Deliverables:**
+1) Fully working **btcUDP v0.1** on Stacks testnet.
+2) Public documentation site (GitHub Pages or Docusaurus).
+3) Announcement + example demos.
 
-* Multiple working use cases
-* Real economic + performance metrics
-
----
-
-### 🚀 Final Goal (Month 3–4)
-
-* Fully working **btcUDP v0.1** on Stacks testnet.
-* Public documentation site (GitHub Pages or Docusaurus).
-* Announcement + example demos.
-
----
-
-If you want, I can **start by drafting the Phase 1 `/docs/spec.md`** (the technical specification of the packet format and flow) based on what you already have — would you like me to do that next?
