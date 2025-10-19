@@ -1,0 +1,99 @@
+What Phase 1 covers?
+
+Phase 1 will involve the following core items (paraphrased from the roadmap):
+
+1) Implementation of the “nano-ledger” concept (the 8-byte packet header with hash, prev pointer, critical flag)
+2) Embedding that nano-header into UDP (or equivalent) packets
+3) Verification of packet chains (hash chaining)
+4) Basic smart contract (on Clarity on Stacks) support to record/anchor the chain of packets
+5) A simple endpoint or demo of sending + verifying such packets (client/server)
+6) Unit tests / integration tests for the above
+
+Thus Phase 1 is essentially: build the minimal working system that sends packets with the nano-ledger header, chains them, and anchors/verifies them via a Clarity contract on Stacks, proving the concept end-to-end.
+
+
+Implementation Plan
+
+1) Define packet format 
+Specify the nano-header structure:
+
+struct NanoHeader {  
+   uint64_t hash;          // 8 bytes: Blake3 or similar truncated to 8-bytes  
+   uint64_t prev;          // 8 bytes: previous packet’s hash  
+   bool critical;          // maybe 1 byte or bit for flag  
+}  
+
+Things to do:
+- Decide how this header is embedded in the UDP packet (prepended to payload).
+- Choose the hash algorithm (e.g., Blake3) and how to truncate to 8 bytes (64 bits).
+- Define how “prev” is set (for first packet maybe zero or special value).
+- Decide on endianness and serialization format (network order).
+- Document the format clearly in code (e.g., in README or design doc).
+
+
+2. Implement the nano-header generation & chaining
+
+In the codebase (likely in blockudp.js or a new module) implement:
+- Compute the packet payload hash (before header)
+- Compute the truncated 8-byte representation
+- Insert the prev value from the last packet sent in that chain/session
+- Insert a critical flag if needed
+- Serialize the header + payload into a UDP packet buffer
+
+Maintain state for last packet hash for a given session/chain (could be in memory for now).
+
+Implement a receiver that parses the header, verifies:
+- The hash matches the payload
+- The prev matches what the receiver expects (i.e., previous packet hash)
+- Optionally record or log chain breaks (missing or mismatched).
+
+Provide simple CLI/demo tools: e.g., sender.js and receiver.js.
+
+3. Smart contract (Clarity) for anchoring packet chains
+
+Write a Clarity smart contract (in nano-ledger.clar) that supports:
+
+- Recording a packet chain anchor: maybe store (sender_address, last_hash, timestamp)
+- A function anchor(hash:uint64, prev:uint64) that appends or updates the chain info.
+- A function verify(hash:uint64, prev:uint64) -> bool to allow checking whether the chain is valid (based on stored state).
+
+Deploy this contract on Stacks testnet (or local devnet) for testing.
+
+Modify the sender side to call the contract after sending each packet (or after a batch) to anchor the chain. Use stacks-js or similar to send the transaction.
+
+On receiver side, optionally fetch the on-chain stored prev value for a sender and compare.
+
+4. Integration: send → chain anchor → receive
+
+Combine the sender code, packet header chaining, on-chain anchoring and receiver code into an end-to-end demo.
+
+For example:
+- Sender sends N packets, each with nano header.
+- For every packet (or every M packets) sender submits the header hash + prev to the Clarity contract.
+- Receiver, upon getting packet K, verifies header locally and queries contract to verify stored state.
+- If mismatch, mark chain broken and log.
+
+Provide simple logging/metrics: number of packets, chain breaks, latency overhead of header & on-chain call.
+
+5. Testing
+
+- Unit tests for header generation/parsing (e.g., tests in tests/ directory).
+- Integration tests: start sender + receiver locally (or in Docker) and simulate packet loss / reordering and observe chain behaviour.
+- Smart contract tests (Clarity unit tests) for anchor and verify functions.
+- Performance test: measure overhead (serialize/deserialise, hashing, on‐chain call latency) and document.
+- Ensure errors are handled (e.g., invalid header, missing prev, on-chain failure).
+
+6. Documentation
+
+- Update README with the Phase 1 design: packet format, chaining logic, contract interface, how to run demo.
+- Provide a diagram of packet flow (sender → network → receiver + blockchain anchor).
+- Provide instructions for deploying contract to testnet / using stacks-js.
+- Write “how to run” scripts: npm install, node sender.js, node receiver.js, etc.
+
+7. Milestones & deliverables
+
+Milestone 1: Packet header definition + sender/receiver code that chains locally (no blockchain yet).
+Milestone 2: Clarity contract for anchoring chain + sender integration (records to chain).
+Milestone 3: Full demo: sender → packet stream → chain anchor → receiver verifying chain + logs.
+Milestone 4: Tests + documentation + performance overhead measurement.
+Milestone 5: Release version v0.1 for Phase 1 (tag in git, update CHANGELOG).
