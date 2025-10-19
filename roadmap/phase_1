@@ -269,6 +269,441 @@ assert(verification.validHash === true);
 console.log('✅ All nano_header tests passed.');
 
 
+On-chain anchoring integration (Stacks-JS call from sender.js)
+
+// File: src/client/nano_header.js
+import crypto from 'crypto';
+
+// Utility functions for encoding/decoding nano-ledger headers
+export function computeHash(data) {
+  const hash = crypto.createHash('blake2b512').update(data).digest();
+  return hash.subarray(0, 8); // first 8 bytes (64 bits)
+}
+
+export function encodeHeader(prevHash, critical = false, payload) {
+  const payloadHash = computeHash(payload);
+  const header = Buffer.alloc(17); // 8 bytes hash + 8 bytes prev + 1 byte flag
+
+  payloadHash.copy(header, 0);
+  prevHash.copy(header, 8);
+  header.writeUInt8(critical ? 1 : 0, 16);
+
+  return Buffer.concat([header, payload]);
+}
+
+export function decodeHeader(buffer) {
+  const hash = buffer.subarray(0, 8);
+  const prev = buffer.subarray(8, 16);
+  const critical = buffer.readUInt8(16) === 1;
+  const payload = buffer.subarray(17);
+
+  return { hash, prev, critical, payload };
+}
+
+export function verifyPacket(buffer, expectedPrev) {
+  const { hash, prev, payload } = decodeHeader(buffer);
+  const recalculated = computeHash(payload);
+  const validHash = recalculated.equals(hash);
+  const validPrev = prev.equals(expectedPrev);
+  return { validHash, validPrev, hash };
+}
+
+// File: src/client/stacks_anchor.js
+import fetch from 'node-fetch';
+import {
+  AnchorMode,
+  makeContractCall,
+  broadcastTransaction,
+  uintCV,
+  bufferCV,
+  PostConditionMode,
+} from '@stacks/transactions';
+import { StacksTestnet } from '@stacks/network';
+
+// Simple helper to anchor packet hash to a deployed Clarity contract
+// NOTE: for Phase 1 this uses a single private key to sign transactions.
+// In production, never hard-code private keys; use secure key management.
+
+const NETWORK = new StacksTestnet();
+const CONTRACT_ADDRESS = process.env.STACKS_CONTRACT_ADDRESS || 'SP000000000000000000002Q6VF78';
+const CONTRACT_NAME = process.env.STACKS_CONTRACT_NAME || 'nano-ledger';
+const SENDER_PRIVATE_KEY = process.env.SENDER_PRIVATE_KEY || '';
+
+export async function anchorOnChain(hashBuf, prevBuf) {
+  if (!SENDER_PRIVATE_KEY) throw new Error('SENDER_PRIVATE_KEY not set');
+
+  // convert buffers to uint CVs or buffers depending on the contract's expected types
+  // Here contract expects two uints; we convert 8-byte buffers to big-endian uint
+  function bufToUint(buf) {
+    // Node BigInt from buffer (big-endian)
+    let bn = 0n;
+    for (const b of buf) {
+      bn = (bn << 8n) + BigInt(b);
+    }
+    return bn.toString();
+  }
+
+  const hashUint = uintCV(Number(BigInt(bufToUint(hashBuf))));
+  const prevUint = uintCV(Number(BigInt(bufToUint(prevBuf))));
+
+  const txOptions = {
+    contractAddress: CONTRACT_ADDRESS,
+    contractName: CONTRACT_NAME,
+    functionName: 'anchor',
+    functionArgs: [hashUint, prevUint],
+    senderKey: SENDER_PRIVATE_KEY,
+    network: NETWORK,
+    postConditionMode: PostConditionMode.Allow,
+    anchorMode: AnchorMode.Any,
+  };
+
+  const tx = await makeContractCall(txOptions);
+  const res = await broadcastTransaction(tx, NETWORK);
+  return res;
+}
+
+// File: src/client/sender.js
+import dgram from 'dgram';
+import { encodeHeader, computeHash } from './nano_header.js';
+import { anchorOnChain } from './stacks_anchor.js';
+
+const client = dgram.createSocket('udp4');
+const HOST = process.env.BTCUDP_HOST || '127.0.0.1';
+const PORT = Number(process.env.BTCUDP_PORT || 5000);
+
+let prevHash = Buffer.alloc(8, 0); // initial prev = 0x00
+
+export async function sendPacket(message, critical = false, anchor = false) {
+  const payload = Buffer.from(message);
+  const packet = encodeHeader(prevHash, critical, payload);
+
+  return new Promise((resolve, reject) => {
+    client.send(packet, 0, packet.length, PORT, HOST, async (err) => {
+      if (err) return reject(err);
+      const newPrev = computeHash(payload);
+      console.log(`Sent: ${message} (hash=${newPrev.toString('hex')})`);
+
+      if (anchor) {
+        try {
+          const result = await anchorOnChain(newPrev, prevHash);
+          console.log('Anchored on-chain:', result);
+        } catch (e) {
+          console.error('Anchor failed:', e.message || e);
+        }
+      }
+
+      prevHash = newPrev;
+      resolve();
+    });
+  });
+}
+
+(async () => {
+  const messages = ['hello', 'world', 'from', 'btcUDP'];
+  for (const msg of messages) {
+    // anchor every packet for Phase 1 demo (can be batched later)
+    await sendPacket(msg, false, true);
+  }
+  client.close();
+})();
+
+// File: src/client/receiver.js
+import dgram from 'dgram';
+import { verifyPacket } from './nano_header.js';
+
+const server = dgram.createSocket('udp4');
+const PORT = Number(process.env.BTCUDP_PORT || 5000);
+let expectedPrev = Buffer.alloc(8, 0);
+
+server.on('message', (msg, rinfo) => {
+  const { validHash, validPrev, hash } = verifyPacket(msg, expectedPrev);
+
+  if (validHash && validPrev) {
+    console.log(`✔ Packet valid from ${rinfo.address}:${rinfo.port}`);
+    expectedPrev = hash;
+  } else {
+    console.warn(`⚠ Invalid packet detected (hash or prev mismatch)`);
+  }
+});
+
+server.bind(PORT, () => console.log(`Receiver listening on port ${PORT}`));
+
+// File: src/contract/nano-ledger.clar
+(define-map packet-chain ((hash uint)) ((prev uint) (timestamp uint)))
+
+(define-public (anchor (hash uint) (prev uint))
+  (begin
+    (map-set packet-chain (tuple (hash hash)) (tuple (prev prev) (timestamp (as-max-len (get-block-info?)))) )
+    (ok true)
+  )
+)
+
+(define-read-only (verify (hash uint) (prev uint))
+  (let ((entry (map-get? packet-chain (tuple (hash hash)))))
+    (match entry
+      entry
+      (ok (is-eq (get prev entry) prev))
+      (ok false)
+    )
+  )
+)
+
+// File: tests/nano_header.test.js
+import assert from 'assert';
+import { encodeHeader, decodeHeader, verifyPacket } from '../src/client/nano_header.js';
+
+const prev = Buffer.alloc(8, 1);
+const payload = Buffer.from('testdata');
+const packet = encodeHeader(prev, false, payload);
+
+const { hash, prev: decodedPrev } = decodeHeader(packet);
+assert(decodedPrev.equals(prev));
+
+const verification = verifyPacket(packet, prev);
+assert(verification.validHash === true);
+
+console.log('✅ All nano_header tests passed.');
+
+// README snippet (how to run Phase 1 demo)
+/*
+1) Install dependencies:
+   npm install
+   npm install @stacks/transactions @stacks/network node-fetch
+
+2) Set environment variables for on-chain anchoring demo (optional for local-only run):
+   export SENDER_PRIVATE_KEY="<hex-private-key>"
+   export STACKS_CONTRACT_ADDRESS="SP..."
+   export STACKS_CONTRACT_NAME="nano-ledger"
+
+3) Start receiver:
+   node src/client/receiver.js
+
+4) Run sender (it will send and anchor each packet):
+   node src/client/sender.js
+
+Notes:
+- For Phase 1 we anchor each packet on-chain for simplicity. This is expensive on mainnet; use testnet or batch anchors.
+- Do NOT hardcode private keys in production. Use secure key management or a signing service.
+*/
+
+
+Adding the unit tests + mocks for anchorOnChain() so the test suite can run offline.
+
+// File: src/client/nano_header.js
+import crypto from 'crypto';
+
+// Utility functions for encoding/decoding nano-ledger headers
+export function computeHash(data) {
+  const hash = crypto.createHash('blake2b512').update(data).digest();
+  return hash.subarray(0, 8); // first 8 bytes (64 bits)
+}
+
+export function encodeHeader(prevHash, critical = false, payload) {
+  const payloadHash = computeHash(payload);
+  const header = Buffer.alloc(17); // 8 bytes hash + 8 bytes prev + 1 byte flag
+
+  payloadHash.copy(header, 0);
+  prevHash.copy(header, 8);
+  header.writeUInt8(critical ? 1 : 0, 16);
+
+  return Buffer.concat([header, payload]);
+}
+
+export function decodeHeader(buffer) {
+  const hash = buffer.subarray(0, 8);
+  const prev = buffer.subarray(8, 16);
+  const critical = buffer.readUInt8(16) === 1;
+  const payload = buffer.subarray(17);
+
+  return { hash, prev, critical, payload };
+}
+
+export function verifyPacket(buffer, expectedPrev) {
+  const { hash, prev, payload } = decodeHeader(buffer);
+  const recalculated = computeHash(payload);
+  const validHash = recalculated.equals(hash);
+  const validPrev = prev.equals(expectedPrev);
+  return { validHash, validPrev, hash };
+}
+
+// File: src/client/stacks_anchor.js
+import {
+  AnchorMode,
+  makeContractCall,
+  broadcastTransaction,
+  uintCV,
+  PostConditionMode,
+} from '@stacks/transactions';
+import { StacksTestnet } from '@stacks/network';
+
+const NETWORK = new StacksTestnet();
+const CONTRACT_ADDRESS = process.env.STACKS_CONTRACT_ADDRESS || 'SP000000000000000000002Q6VF78';
+const CONTRACT_NAME = process.env.STACKS_CONTRACT_NAME || 'nano-ledger';
+const SENDER_PRIVATE_KEY = process.env.SENDER_PRIVATE_KEY || '';
+
+export async function anchorOnChain(hashBuf, prevBuf) {
+  if (!SENDER_PRIVATE_KEY) throw new Error('SENDER_PRIVATE_KEY not set');
+
+  const hashUint = uintCV(BigInt('0x' + hashBuf.toString('hex')));
+  const prevUint = uintCV(BigInt('0x' + prevBuf.toString('hex')));
+
+  const txOptions = {
+    contractAddress: CONTRACT_ADDRESS,
+    contractName: CONTRACT_NAME,
+    functionName: 'anchor',
+    functionArgs: [hashUint, prevUint],
+    senderKey: SENDER_PRIVATE_KEY,
+    network: NETWORK,
+    postConditionMode: PostConditionMode.Allow,
+    anchorMode: AnchorMode.Any,
+  };
+
+  const tx = await makeContractCall(txOptions);
+  const res = await broadcastTransaction(tx, NETWORK);
+  return res;
+}
+
+// File: src/client/sender.js
+import dgram from 'dgram';
+import { encodeHeader, computeHash } from './nano_header.js';
+import { anchorOnChain } from './stacks_anchor.js';
+
+const client = dgram.createSocket('udp4');
+const HOST = process.env.BTCUDP_HOST || '127.0.0.1';
+const PORT = Number(process.env.BTCUDP_PORT || 5000);
+
+let prevHash = Buffer.alloc(8, 0); // initial prev = 0x00
+
+export async function sendPacket(message, critical = false, anchor = false) {
+  const payload = Buffer.from(message);
+  const packet = encodeHeader(prevHash, critical, payload);
+
+  return new Promise((resolve, reject) => {
+    client.send(packet, 0, packet.length, PORT, HOST, async (err) => {
+      if (err) return reject(err);
+      const newPrev = computeHash(payload);
+      console.log(`Sent: ${message} (hash=${newPrev.toString('hex')})`);
+
+      if (anchor) {
+        try {
+          const result = await anchorOnChain(newPrev, prevHash);
+          console.log('Anchored on-chain:', result);
+        } catch (e) {
+          console.error('Anchor failed:', e.message || e);
+        }
+      }
+
+      prevHash = newPrev;
+      resolve();
+    });
+  });
+}
+
+(async () => {
+  const messages = ['hello', 'world', 'from', 'btcUDP'];
+  for (const msg of messages) {
+    await sendPacket(msg, false, true);
+  }
+  client.close();
+})();
+
+// File: src/client/receiver.js
+import dgram from 'dgram';
+import { verifyPacket } from './nano_header.js';
+
+const server = dgram.createSocket('udp4');
+const PORT = Number(process.env.BTCUDP_PORT || 5000);
+let expectedPrev = Buffer.alloc(8, 0);
+
+server.on('message', (msg, rinfo) => {
+  const { validHash, validPrev, hash } = verifyPacket(msg, expectedPrev);
+
+  if (validHash && validPrev) {
+    console.log(`✔ Packet valid from ${rinfo.address}:${rinfo.port}`);
+    expectedPrev = hash;
+  } else {
+    console.warn(`⚠ Invalid packet detected (hash or prev mismatch)`);
+  }
+});
+
+server.bind(PORT, () => console.log(`Receiver listening on port ${PORT}`));
+
+// File: src/contract/nano-ledger.clar
+(define-map packet-chain ((hash uint)) ((prev uint) (timestamp uint)))
+
+(define-public (anchor (hash uint) (prev uint))
+  (begin
+    (map-set packet-chain (tuple (hash hash)) (tuple (prev prev) (timestamp u0)))
+    (ok true)
+  )
+)
+
+(define-read-only (verify (hash uint) (prev uint))
+  (let ((entry (map-get? packet-chain (tuple (hash hash)))))
+    (match entry
+      entry
+      (ok (is-eq (get prev entry) prev))
+      (ok false)
+    )
+  )
+)
+
+// File: tests/nano_header.test.js
+import assert from 'assert';
+import { encodeHeader, decodeHeader, verifyPacket } from '../src/client/nano_header.js';
+
+const prev = Buffer.alloc(8, 1);
+const payload = Buffer.from('testdata');
+const packet = encodeHeader(prev, false, payload);
+
+const { hash, prev: decodedPrev } = decodeHeader(packet);
+assert(decodedPrev.equals(prev));
+
+const verification = verifyPacket(packet, prev);
+assert(verification.validHash === true);
+
+console.log('✅ All nano_header tests passed.');
+
+// File: tests/stacks_anchor.test.js
+import assert from 'assert';
+import sinon from 'sinon';
+import * as stacksTx from '@stacks/transactions';
+import * as stacksAnchor from '../src/client/stacks_anchor.js';
+
+// Mock makeContractCall and broadcastTransaction
+sinon.stub(stacksTx, 'makeContractCall').callsFake(async () => ({ mockTx: true }));
+sinon.stub(stacksTx, 'broadcastTransaction').callsFake(async (tx, net) => ({
+  txid: '0x1234',
+  success: true,
+  network: net.url,
+}));
+
+process.env.SENDER_PRIVATE_KEY = 'abcdef123456';
+
+(async () => {
+  const hash = Buffer.alloc(8, 1);
+  const prev = Buffer.alloc(8, 2);
+  const result = await stacksAnchor.anchorOnChain(hash, prev);
+
+  assert(result.success === true);
+  assert(result.txid === '0x1234');
+
+  console.log('✅ Stacks anchoring mock test passed.');
+})();
+
+// README snippet
+/*
+Run tests:
+   npm install
+   npm install mocha sinon @stacks/transactions @stacks/network
+   npx mocha tests/*.test.js
+*/
+
+
+
+
+
+
 
 
 
