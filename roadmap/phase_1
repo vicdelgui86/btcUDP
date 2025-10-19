@@ -992,6 +992,433 @@ Expected output:
 ---
 
 
+End-to-end tests that run inside Docker, simulating multiple nodes sending and anchoring packets
+
+# btcUDP Phase 1 – Development, Deployment, Docker, and End-to-End Tests
+
+This guide explains how to set up, test, deploy, run Docker, and perform end-to-end simulations for **Phase 1** of `btcUDP`.
+
+---
+
+## 📦 Project Overview
+
+**btcUDP** is a UDP-based messaging protocol with data integrity and optional blockchain anchoring. Phase 1 includes:
+
+1. Nano-ledger headers.
+2. Hash-linked message sequencing.
+3. Optional on-chain anchoring via Stacks.
+
+---
+
+## 🧱 Project Structure
+
+```
+btcUDP/
+├── src/
+│   ├── client/
+│   │   ├── sender.js
+│   │   ├── receiver.js
+│   │   ├── nano_header.js
+│   │   └── stacks_anchor.js
+│   └── contract/
+│       └── nano-ledger.clar
+├── tests/
+│   ├── nano_header.test.js
+│   ├── stacks_anchor.test.js
+│   └── e2e.test.js
+├── docker-compose.yml
+├── Dockerfile
+├── package.json
+└── README.md
+```
+
+---
+
+## 🐳 Docker End-to-End Tests
+
+We simulate multiple sender/receiver nodes with Docker to validate Phase 1 functionality.
+
+### 1. `tests/e2e.test.js`
+```javascript
+import assert from 'assert';
+import dgram from 'dgram';
+import { encodeHeader, computeHash, verifyPacket } from '../src/client/nano_header.js';
+
+const PORT = 5500;
+const HOST = '127.0.0.1';
+
+function createReceiver() {
+  return new Promise(resolve => {
+    const server = dgram.createSocket('udp4');
+    let expectedPrev = Buffer.alloc(8, 0);
+    let received = [];
+
+    server.on('message', (msg) => {
+      const { validHash, validPrev, hash } = verifyPacket(msg, expectedPrev);
+      if (validHash && validPrev) {
+        received.push(msg);
+        expectedPrev = hash;
+      }
+    });
+
+    server.bind(PORT, () => resolve({ server, received }));
+  });
+}
+
+function createSender(messages) {
+  return new Promise(resolve => {
+    const client = dgram.createSocket('udp4');
+    let prevHash = Buffer.alloc(8, 0);
+
+    (async () => {
+      for (const msg of messages) {
+        const payload = Buffer.from(msg);
+        const packet = encodeHeader(prevHash, false, payload);
+        client.send(packet, 0, packet.length, PORT, HOST);
+        prevHash = computeHash(payload);
+        await new Promise(r => setTimeout(r, 50)); // small delay
+      }
+      client.close();
+      resolve();
+    })();
+  });
+}
+
+(async () => {
+  const receiver = await createReceiver();
+  const messages = ['node1', 'node2', 'node3'];
+  await createSender(messages);
+
+  // wait for messages to be processed
+  await new Promise(r => setTimeout(r, 200));
+  assert(receiver.received.length === messages.length);
+
+  console.log('✅ E2E UDP test passed');
+  receiver.server.close();
+})();
+```
+
+### 2. Running E2E Test with Docker
+Add a `docker-compose.test.yml` if needed:
+```yaml
+version: '3.8'
+services:
+  btcudp-e2e:
+    build: .
+    container_name: btcudp_e2e
+    environment:
+      - BTCUDP_PORT=5500
+      - BTCUDP_HOST=0.0.0.0
+    command: npx mocha tests/e2e.test.js
+```
+
+Run:
+```bash
+docker-compose -f docker-compose.test.yml up --build
+```
+
+This spins up a container that runs a local receiver and sender inside Docker and validates UDP transmission and nano-ledger hash linking.
+
+---
+
+## ✅ Summary of Phase 1 Capabilities
+
+- Nano-ledger header format with 8-byte BLAKE2b hashes.
+- UDP sender/receiver with hash verification.
+- Optional on-chain anchoring using Stacks.
+- Dockerized local network for testnet and nodes.
+- Unit tests and end-to-end simulation included.
+
+---
+
+
+Add batch anchoring for multiple packets to optimize testnet/mainnet gas usage
+
+# btcUDP Phase 1 – Development, Deployment, Docker, E2E, and Batch Anchoring
+
+This guide explains how to set up, test, deploy, run Docker, perform end-to-end simulations, and batch-anchor multiple UDP packets for **Phase 1** of `btcUDP`.
+
+---
+
+## 📦 Project Overview
+
+**btcUDP** is a UDP-based messaging protocol with data integrity and optional blockchain anchoring. Phase 1 includes:
+
+1. Nano-ledger headers.
+2. Hash-linked message sequencing.
+3. Optional on-chain anchoring via Stacks.
+4. Batch anchoring multiple packets to reduce gas/transactions.
+
+---
+
+## 🧱 Project Structure
+
+```
+btcUDP/
+├── src/
+│   ├── client/
+│   │   ├── sender.js
+│   │   ├── receiver.js
+│   │   ├── nano_header.js
+│   │   └── stacks_anchor.js
+│   └── contract/
+│       └── nano-ledger.clar
+├── tests/
+│   ├── nano_header.test.js
+│   ├── stacks_anchor.test.js
+│   └── e2e.test.js
+├── docker-compose.yml
+├── Dockerfile
+├── package.json
+└── README.md
+```
+
+---
+
+## ⚡ Batch Anchoring Implementation
+
+**Purpose:** Anchor multiple packets in a single contract call to save gas and improve throughput.
+
+### Update `stacks_anchor.js`
+```javascript
+export async function batchAnchorOnChain(hashBuffers, prevBuffers) {
+  if (!SENDER_PRIVATE_KEY) throw new Error('SENDER_PRIVATE_KEY not set');
+  if (hashBuffers.length !== prevBuffers.length) throw new Error('Arrays must be equal');
+
+  const txOptionsArray = hashBuffers.map((hashBuf, idx) => {
+    const prevBuf = prevBuffers[idx];
+    return {
+      hash: uintCV(BigInt('0x' + hashBuf.toString('hex'))),
+      prev: uintCV(BigInt('0x' + prevBuf.toString('hex'))),
+    };
+  });
+
+  // Flatten functionArgs: [hash1, prev1, hash2, prev2, ...]
+  const functionArgs = txOptionsArray.flatMap(obj => [obj.hash, obj.prev]);
+
+  const tx = await makeContractCall({
+    contractAddress: CONTRACT_ADDRESS,
+    contractName: CONTRACT_NAME,
+    functionName: 'anchorBatch',
+    functionArgs,
+    senderKey: SENDER_PRIVATE_KEY,
+    network: NETWORK,
+    postConditionMode: PostConditionMode.Allow,
+    anchorMode: AnchorMode.Any,
+  });
+
+  return await broadcastTransaction(tx, NETWORK);
+}
+```
+
+### Update Clarity Contract `nano-ledger.clar`
+```clarity
+(define-public (anchorBatch (hashes (list 10 uint)) (prevs (list 10 uint)))
+  (begin
+    (for-each index hashes
+      (let ((h (unwrap! (list-get hashes index) 0))
+            (p (unwrap! (list-get prevs index) 0)))
+        (map-set packet-chain (tuple (hash h)) (tuple (prev p) (timestamp u0)))))
+    (ok true)))
+```
+
+> Adjust list size `10` to the maximum number of packets per batch as needed.
+
+---
+
+## 🧪 Using Batch Anchoring in Sender
+
+```javascript
+// Example: send and batch-anchor
+const messages = ['msg1','msg2','msg3'];
+const hashBuffers = [];
+const prevBuffers = [];
+
+for (const msg of messages) {
+  const payload = Buffer.from(msg);
+  const packet = encodeHeader(prevHash, false, payload);
+  prevHash = computeHash(payload);
+  hashBuffers.push(prevHash);
+  prevBuffers.push(prevHash); // link to previous as needed
+}
+
+await batchAnchorOnChain(hashBuffers, prevBuffers);
+```
+
+---
+
+## ✅ Summary of Phase 1 Enhancements
+
+- Nano-ledger headers for UDP packets.
+- Single packet and **batch on-chain anchoring**.
+- Dockerized local testnet and nodes.
+- Unit tests and end-to-end simulations.
+- Reduced gas usage with batch anchoring.
+
+---
+
+
+Add automated Docker E2E tests for batch anchoring, so the entire pipeline can be validated in one command
+
+# btcUDP Phase 1 – Full Development, Deployment, Docker, E2E, and Batch Anchoring
+
+This guide explains setup, testing, deployment, Docker, end-to-end simulations, and batch anchoring for **Phase 1** of `btcUDP`.
+
+---
+
+## 📦 Project Overview
+
+**btcUDP** is a UDP-based messaging protocol with data integrity and optional blockchain anchoring. Phase 1 includes:
+
+1. Nano-ledger headers.
+2. Hash-linked message sequencing.
+3. Optional on-chain anchoring via Stacks.
+4. Batch anchoring multiple packets.
+5. Dockerized environment for testing nodes and Stacks testnet.
+
+---
+
+## 🧱 Project Structure
+
+```
+btcUDP/
+├── src/
+│   ├── client/
+│   │   ├── sender.js
+│   │   ├── receiver.js
+│   │   ├── nano_header.js
+│   │   └── stacks_anchor.js
+│   └── contract/
+│       └── nano-ledger.clar
+├── tests/
+│   ├── nano_header.test.js
+│   ├── stacks_anchor.test.js
+│   ├── e2e.test.js
+│   └── e2e_batch.test.js
+├── docker-compose.yml
+├── Dockerfile
+├── package.json
+└── README.md
+```
+
+---
+
+## 🐳 Docker Setup
+
+- `stacks-testnet` – local Stacks devnet via Clarinet
+- `btcudp-receiver` – UDP receiver container
+- `btcudp-sender` – UDP sender container
+
+```bash
+docker-compose up --build
+```
+
+---
+
+## ⚡ Batch Anchoring E2E Test
+
+### `tests/e2e_batch.test.js`
+```javascript
+import assert from 'assert';
+import dgram from 'dgram';
+import { encodeHeader, computeHash, verifyPacket } from '../src/client/nano_header.js';
+import { batchAnchorOnChain } from '../src/client/stacks_anchor.js';
+
+const PORT = 5600;
+const HOST = '127.0.0.1';
+
+function createReceiver() {
+  return new Promise(resolve => {
+    const server = dgram.createSocket('udp4');
+    let expectedPrev = Buffer.alloc(8, 0);
+    let received = [];
+
+    server.on('message', (msg) => {
+      const { validHash, validPrev, hash } = verifyPacket(msg, expectedPrev);
+      if (validHash && validPrev) {
+        received.push(msg);
+        expectedPrev = hash;
+      }
+    });
+
+    server.bind(PORT, () => resolve({ server, received }));
+  });
+}
+
+function createSender(messages) {
+  return new Promise(resolve => {
+    const client = dgram.createSocket('udp4');
+    let prevHash = Buffer.alloc(8, 0);
+    const hashBuffers = [];
+    const prevBuffers = [];
+
+    (async () => {
+      for (const msg of messages) {
+        const payload = Buffer.from(msg);
+        const packet = encodeHeader(prevHash, false, payload);
+        client.send(packet, 0, packet.length, PORT, HOST);
+        prevHash = computeHash(payload);
+        hashBuffers.push(prevHash);
+        prevBuffers.push(prevHash);
+        await new Promise(r => setTimeout(r, 50));
+      }
+
+      // Batch anchor after sending all messages
+      await batchAnchorOnChain(hashBuffers, prevBuffers);
+      client.close();
+      resolve();
+    })();
+  });
+}
+
+(async () => {
+  const receiver = await createReceiver();
+  const messages = ['batch1', 'batch2', 'batch3', 'batch4'];
+  await createSender(messages);
+
+  // wait for messages to be processed
+  await new Promise(r => setTimeout(r, 500));
+  assert(receiver.received.length === messages.length);
+
+  console.log('✅ Batch E2E UDP test passed');
+  receiver.server.close();
+})();
+```
+
+### Docker Compose for Batch Test
+```yaml
+version: '3.8'
+services:
+  btcudp-e2e-batch:
+    build: .
+    container_name: btcudp_e2e_batch
+    environment:
+      - BTCUDP_PORT=5600
+      - BTCUDP_HOST=0.0.0.0
+      - SENDER_PRIVATE_KEY=abcdef123456
+      - STACKS_CONTRACT_ADDRESS=ST123...
+      - STACKS_CONTRACT_NAME=nano-ledger
+    command: npx mocha tests/e2e_batch.test.js
+```
+
+Run:
+```bash
+docker-compose -f docker-compose.test.yml up --build
+```
+
+This performs full end-to-end testing of multiple UDP packets and batch anchoring in a single transaction.
+
+---
+
+## ✅ Summary of Phase 1 Enhancements
+
+- Nano-ledger headers for UDP packets.
+- Single and batch on-chain anchoring.
+- Dockerized local network for testing nodes and Stacks testnet.
+- Unit tests and end-to-end simulations for both single and batch packets.
+- Optimized for gas usage with batch anchoring.
+
+---
 
 
 
