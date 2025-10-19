@@ -97,3 +97,179 @@ Milestone 2: Clarity contract for anchoring chain + sender integration (records 
 Milestone 3: Full demo: sender → packet stream → chain anchor → receiver verifying chain + logs.
 Milestone 4: Tests + documentation + performance overhead measurement.
 Milestone 5: Release version v0.1 for Phase 1 (tag in git, update CHANGELOG).
+
+Design decisions & considerations
+
+- Hash truncation to 8 bytes: While truncating reduces overhead, it lose full collision resistance. Document the risk and rationale (eight bytes chosen for minimal overhead) and consider future upgrade path (e.g., 16 bytes).
+
+- State management for “prev”: In a distributed system, how to agree on what the “prev” value is? For Phase 1 we can simplify by managing per-session chain locally. But note future scaling will require distributed state or consensus.
+
+- On‐chain anchoring frequency: Each packet → on-chain may be too heavy. For Phase 1, we could anchor every packet or every N packets. Document this trade-off.
+
+- Packet loss/reordering: UDP may drop or reorder packets. The chain logic must either accept gaps (skipping some) or mark broken chain. For Phase 1, we can mark broken chain and log. Future phases can handle recovery/retry.
+
+- Latency & overhead: The hashing + header + blockchain call add overhead. Measure and report. For Phase 1 the goal is correctness, not full performance optimization.
+
+- Security / tampering: The header hash + prev chain gives tamper-evidence (if payload altered or packet missing). But consider replay attacks, spoofing, etc. Phase 1 will not fully address all security but document limitations.
+
+- Clarity contract state size & cost: On Stacks (and underlying Bitcoin anchoring) transactions incur fees. For Phase 1 use testnet or a very lightweight contract. In future will need batching or alternative anchoring.
+
+- Session vs global chain: Decide if chain is per sender session (makes sense) or global. For Phase 1 make it per sender (identified by address).
+
+- Versioning & future upgrades: Tag packet header version etc. Document that. In Phase 1 you might include a version byte.
+
+
+File/Module Structure
+
+/src
+  /client
+    sender.js
+    receiver.js
+    nano_header.js   // header encode/decode, hashing
+  /contract
+    nano-ledger.clar  // clarity contract
+/tests
+  nano_header.test.js
+  integration.test.js
+/README.md
+/CHANGELOG.md
+
+And update package.json scripts:
+
+"scripts": {
+  "test": "mocha tests/**/*.test.js",
+  "start:sender": "node src/client/sender.js",
+  "start:receiver": "node src/client/receiver.js"
+}
+
+
+Template for Phase 1
+
+// File: src/client/nano_header.js
+import crypto from 'crypto';
+
+// Utility functions for encoding/decoding nano-ledger headers
+export function computeHash(data) {
+  const hash = crypto.createHash('blake2b512').update(data).digest();
+  return hash.subarray(0, 8); // first 8 bytes (64 bits)
+}
+
+export function encodeHeader(prevHash, critical = false, payload) {
+  const payloadHash = computeHash(payload);
+  const header = Buffer.alloc(17); // 8 bytes hash + 8 bytes prev + 1 byte flag
+
+  payloadHash.copy(header, 0);
+  prevHash.copy(header, 8);
+  header.writeUInt8(critical ? 1 : 0, 16);
+
+  return Buffer.concat([header, payload]);
+}
+
+export function decodeHeader(buffer) {
+  const hash = buffer.subarray(0, 8);
+  const prev = buffer.subarray(8, 16);
+  const critical = buffer.readUInt8(16) === 1;
+  const payload = buffer.subarray(17);
+
+  return { hash, prev, critical, payload };
+}
+
+export function verifyPacket(buffer, expectedPrev) {
+  const { hash, prev, payload } = decodeHeader(buffer);
+  const recalculated = computeHash(payload);
+  const validHash = recalculated.equals(hash);
+  const validPrev = prev.equals(expectedPrev);
+  return { validHash, validPrev, hash };
+}
+
+// File: src/client/sender.js
+import dgram from 'dgram';
+import { encodeHeader, computeHash } from './nano_header.js';
+import fs from 'fs';
+
+const client = dgram.createSocket('udp4');
+const HOST = '127.0.0.1';
+const PORT = 5000;
+
+let prevHash = Buffer.alloc(8, 0); // initial prev = 0x00
+
+export async function sendPacket(message, critical = false) {
+  const payload = Buffer.from(message);
+  const packet = encodeHeader(prevHash, critical, payload);
+
+  return new Promise((resolve, reject) => {
+    client.send(packet, 0, packet.length, PORT, HOST, (err) => {
+      if (err) return reject(err);
+      prevHash = computeHash(payload);
+      console.log(`Sent: ${message}`);
+      resolve();
+    });
+  });
+}
+
+(async () => {
+  const messages = ['hello', 'world', 'from', 'btcUDP'];
+  for (const msg of messages) {
+    await sendPacket(msg);
+  }
+  client.close();
+})();
+
+// File: src/client/receiver.js
+import dgram from 'dgram';
+import { verifyPacket } from './nano_header.js';
+
+const server = dgram.createSocket('udp4');
+const PORT = 5000;
+let expectedPrev = Buffer.alloc(8, 0);
+
+server.on('message', (msg, rinfo) => {
+  const { validHash, validPrev, hash } = verifyPacket(msg, expectedPrev);
+
+  if (validHash && validPrev) {
+    console.log(`✔ Packet valid from ${rinfo.address}:${rinfo.port}`);
+    expectedPrev = hash;
+  } else {
+    console.warn(`⚠ Invalid packet detected (hash or prev mismatch)`);
+  }
+});
+
+server.bind(PORT, () => console.log(`Receiver listening on port ${PORT}`));
+
+// File: src/contract/nano-ledger.clar
+(define-data-var packet-chain (map uint uint))
+
+(define-public (anchor (hash uint) (prev uint))
+  (begin
+    (map-set packet-chain hash prev)
+    (ok true)
+  )
+)
+
+(define-read-only (verify (hash uint) (prev uint))
+  (let ((stored (default-to u0 (map-get? packet-chain hash))))
+    (ok (is-eq stored prev))
+  )
+)
+
+// File: tests/nano_header.test.js
+import assert from 'assert';
+import { encodeHeader, decodeHeader, verifyPacket } from '../src/client/nano_header.js';
+
+const prev = Buffer.alloc(8, 1);
+const payload = Buffer.from('testdata');
+const packet = encodeHeader(prev, false, payload);
+
+const { hash, prev: decodedPrev } = decodeHeader(packet);
+assert(decodedPrev.equals(prev));
+
+const verification = verifyPacket(packet, prev);
+assert(verification.validHash === true);
+
+console.log('✅ All nano_header tests passed.');
+
+
+
+
+
+
