@@ -1421,8 +1421,222 @@ This performs full end-to-end testing of multiple UDP packets and batch anchorin
 ---
 
 
+Integrate logging and metrics for sender/receiver throughput and on-chain anchoring stats
+
+# btcUDP Phase 1 – Full Development, Deployment, Docker, E2E, Batch Anchoring, and Metrics
+
+This guide explains setup, testing, deployment, Docker, end-to-end simulations, batch anchoring, and metrics for **Phase 1** of `btcUDP`.
+
+---
+
+## 📦 Project Overview
+
+**btcUDP** is a UDP-based messaging protocol with data integrity and optional blockchain anchoring. Phase 1 includes:
+
+1. Nano-ledger headers.
+2. Hash-linked message sequencing.
+3. Optional on-chain anchoring via Stacks.
+4. Batch anchoring multiple packets.
+5. Dockerized environment for testing nodes and Stacks testnet.
+6. Logging and metrics for throughput and anchoring statistics.
+
+---
+
+## ⚡ Metrics Implementation
+
+### Update `sender.js` for metrics
+```javascript
+import { encodeHeader, computeHash } from './nano_header.js';
+import { anchorOnChain, batchAnchorOnChain } from './stacks_anchor.js';
+import dgram from 'dgram';
+
+const client = dgram.createSocket('udp4');
+let prevHash = Buffer.alloc(8, 0);
+let sentCount = 0;
+let anchorCount = 0;
+const startTime = Date.now();
+
+export async function sendPacket(message, anchor = false) {
+  const payload = Buffer.from(message);
+  const packet = encodeHeader(prevHash, false, payload);
+
+  client.send(packet, 0, packet.length, 5000, '127.0.0.1', async (err) => {
+    if (err) return console.error(err);
+    prevHash = computeHash(payload);
+    sentCount++;
+
+    if (anchor) {
+      try {
+        await anchorOnChain(prevHash, prevHash);
+        anchorCount++;
+      } catch(e) {
+        console.error('Anchor failed:', e.message);
+      }
+    }
+
+    logMetrics();
+  });
+}
+
+function logMetrics() {
+  const elapsed = (Date.now() - startTime) / 1000;
+  console.log(`📊 Sent: ${sentCount}, Anchored: ${anchorCount}, Elapsed: ${elapsed.toFixed(2)}s`);
+}
+```
+
+### Update `batchAnchorOnChain` for metrics
+```javascript
+export async function batchAnchorOnChain(hashBuffers, prevBuffers) {
+  const res = await originalBatchAnchor(hashBuffers, prevBuffers); // your existing batch anchor logic
+  console.log(`📊 Batch anchored ${hashBuffers.length} packets`);
+  return res;
+}
+```
+
+### Receiver metrics
+```javascript
+import dgram from 'dgram';
+import { verifyPacket } from './nano_header.js';
+
+const server = dgram.createSocket('udp4');
+let expectedPrev = Buffer.alloc(8, 0);
+let receivedCount = 0;
+const startTime = Date.now();
+
+server.on('message', (msg) => {
+  const { validHash, validPrev } = verifyPacket(msg, expectedPrev);
+  if (validHash && validPrev) {
+    expectedPrev = msg.subarray(0,8);
+    receivedCount++;
+    logMetrics();
+  }
+});
+
+function logMetrics() {
+  const elapsed = (Date.now() - startTime) / 1000;
+  console.log(`📈 Received: ${receivedCount}, Elapsed: ${elapsed.toFixed(2)}s`);
+}
+
+server.bind(5000, () => console.log('Receiver listening on 5000'));
+```
+
+### Docker Integration
+- Metrics logs are printed to container stdout.
+- Use `docker logs -f btcudp_sender` and `docker logs -f btcudp_receiver` to monitor throughput.
+
+---
+
+## ✅ Phase 1 Complete Feature Set
+
+- Nano-ledger headers for UDP packets.
+- Single and batch on-chain anchoring.
+- Dockerized testnet and nodes.
+- Unit tests and end-to-end simulations.
+- Metrics and logging for sent, received, and anchored packets.
+- Optimized for gas usage with batch anchoring.
+
+---
 
 
+Add optional encryption for payloads to secure messages over UDP
+
+# btcUDP Phase 1 – Full Development, Deployment, Docker, E2E, Batch Anchoring, Metrics, and Encryption
+
+This guide explains setup, testing, deployment, Docker, end-to-end simulations, batch anchoring, metrics, and optional encryption for **Phase 1** of `btcUDP`.
+
+---
+
+## 📦 Project Overview
+
+**btcUDP** is a UDP-based messaging protocol with data integrity, optional blockchain anchoring, batch processing, logging, metrics, and encrypted payloads.
+
+Phase 1 includes:
+1. Nano-ledger headers.
+2. Hash-linked message sequencing.
+3. Optional on-chain anchoring via Stacks.
+4. Batch anchoring multiple packets.
+5. Dockerized environment for testing nodes and Stacks testnet.
+6. Logging and metrics for throughput and anchoring.
+7. Optional encryption for UDP payloads.
+
+---
+
+## 🔐 Encryption Implementation
+
+### Update `nano_header.js`
+```javascript
+import crypto from 'crypto';
+
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef'; // 32 bytes hex
+const IV_LENGTH = 16;
+
+export function encryptPayload(payload) {
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+  let encrypted = cipher.update(payload);
+  encrypted = Buffer.concat([encrypted, cipher.final()]);
+  return Buffer.concat([iv, encrypted]);
+}
+
+export function decryptPayload(data) {
+  const iv = data.slice(0, IV_LENGTH);
+  const encryptedText = data.slice(IV_LENGTH);
+  const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+  let decrypted = decipher.update(encryptedText);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+  return decrypted;
+}
+```
+
+### Update `sender.js` for encryption
+```javascript
+import { encryptPayload } from './nano_header.js';
+
+export async function sendPacket(message, anchor = false, encrypt = false) {
+  let payload = Buffer.from(message);
+  if (encrypt) payload = encryptPayload(payload);
+
+  const packet = encodeHeader(prevHash, false, payload);
+  // send via UDP...
+}
+```
+
+### Update `receiver.js` for decryption
+```javascript
+import { decryptPayload } from './nano_header.js';
+
+server.on('message', (msg) => {
+  const { validHash, validPrev, payload } = verifyPacket(msg, expectedPrev);
+  if (validHash && validPrev) {
+    let message = payload;
+    if (process.env.ENCRYPTION_KEY) {
+      message = decryptPayload(payload);
+    }
+    console.log('Received message:', message.toString());
+    expectedPrev = msg.subarray(0,8);
+    receivedCount++;
+    logMetrics();
+  }
+});
+```
+
+### Notes
+- Ensure `ENCRYPTION_KEY` is a 32-byte hex string.
+- Encryption is optional and can be enabled via environment variable.
+
+---
+
+## ✅ Phase 1 Feature Set with Encryption
+
+- Nano-ledger headers for UDP packets.
+- Single and batch on-chain anchoring.
+- Dockerized testnet and nodes.
+- Unit tests and end-to-end simulations.
+- Metrics and logging for sent, received, and anchored packets.
+- Batch anchoring to optimize gas usage.
+- Optional AES-256-CBC encryption for payloads over UDP.
+
+---
 
 
 
