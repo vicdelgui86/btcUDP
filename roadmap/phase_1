@@ -697,6 +697,150 @@ Run tests:
    npm install
    npm install mocha sinon @stacks/transactions @stacks/network
    npx mocha tests/*.test.js
+
+
+Deployment guide (testnet setup, .env config, and running steps)
+
+# btcUDP Phase 1 – Development and Deployment Guide
+
+This guide explains how to set up, test, and deploy **Phase 1** of the `btcUDP` project, which includes UDP transmission, nano-ledger headers, and on-chain anchoring via Stacks.
+
+---
+
+## 📦 Project Overview
+
+**btcUDP** is a lightweight UDP-based message protocol with built-in data integrity and optional blockchain anchoring. Phase 1 establishes the foundation by:
+
+1. Building nano-ledger headers for each UDP packet.
+2. Hash-linking messages for verifiable sequencing.
+3. Anchoring packet hashes on the **Stacks blockchain** for immutable proof.
+
+---
+
+## 🧱 Project Structure
+
+```
+btcUDP/
+├── src/
+│   ├── client/
+│   │   ├── sender.js
+│   │   ├── receiver.js
+│   │   ├── nano_header.js
+│   │   └── stacks_anchor.js
+│   └── contract/
+│       └── nano-ledger.clar
+├── tests/
+│   ├── nano_header.test.js
+│   └── stacks_anchor.test.js
+├── package.json
+└── README.md
+```
+
+---
+
+## ⚙️ Installation
+
+```bash
+git clone https://github.com/vicdelgui86/btcUDP.git
+cd btcUDP
+npm install
+```
+
+Install required dependencies:
+```bash
+npm install mocha sinon @stacks/transactions @stacks/network
+```
+
+---
+
+## 🔐 Environment Variables
+
+Create a `.env` file in the root directory with the following:
+
+```bash
+STACKS_CONTRACT_ADDRESS=ST123YOURADDRESSHERE
+STACKS_CONTRACT_NAME=nano-ledger
+SENDER_PRIVATE_KEY=your_private_key_here
+BTCUDP_HOST=127.0.0.1
+BTCUDP_PORT=5000
+```
+
+You can generate a test private key using the Stacks CLI or the [Stacks Authenticator](https://explorer.stacks.co/).
+
+---
+
+## 🚀 Running the Network
+
+**1. Start the Receiver**
+```bash
+node src/client/receiver.js
+```
+
+**2. Send Packets**
+```bash
+node src/client/sender.js
+```
+Each message will be hashed, transmitted via UDP, and optionally anchored on Stacks Testnet.
+
+---
+
+## 🔗 Clarity Contract Deployment
+
+Deploy the `nano-ledger.clar` contract on Stacks Testnet:
+
+```bash
+clarinet deploy --network testnet src/contract/nano-ledger.clar
+```
+
+**Contract Functions:**
+- `(anchor (hash uint) (prev uint))` — Records a new packet hash and its link.
+- `(verify (hash uint) (prev uint))` — Validates if a packet’s previous hash matches.
+
+---
+
+## 🧪 Running Tests
+
+To verify the packet logic and blockchain integration:
+
+```bash
+npx mocha tests/*.test.js
+```
+
+Expected output:
+```
+✅ All nano_header tests passed.
+✅ Stacks anchoring mock test passed.
+```
+
+---
+
+## 🧭 Phase 1 Summary
+
+✔ Nano-ledger header format with 8-byte BLAKE2b hashes.  
+✔ UDP sender/receiver with hash verification.  
+✔ Clarity smart contract for anchoring.  
+✔ On-chain integration through `@stacks/transactions`.  
+✔ Automated test suite for validation.
+
+---
+
+## 🔜 Next Steps (Phase 2 Preview)
+
+- Integrate multi-node synchronization.
+- Add Merkle root aggregation for batches.
+- Implement CLI monitoring dashboard.
+- Add compression and encryption modules.
+
+---
+
+**Author:** Victor Delgado  
+**Project:** btcUDP  
+**Phase:** 1 – Nano Ledger Anchoring
+
+
+
+
+
 */
 
 
