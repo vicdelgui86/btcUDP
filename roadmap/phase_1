@@ -837,11 +837,160 @@ Expected output:
 **Project:** btcUDP  
 **Phase:** 1 – Nano Ledger Anchoring
 
-
-
-
-
 */
+
+
+Docker support next (for running a local Stacks testnet and UDP nodes automatically)
+
+# btcUDP Phase 1 – Development, Deployment, and Docker Setup
+
+This guide explains how to set up, test, deploy, and run **Phase 1** of the `btcUDP` project with Docker, enabling a local Stacks testnet and UDP nodes.
+
+---
+
+## 📦 Project Overview
+
+**btcUDP** is a UDP-based message protocol with data integrity and optional blockchain anchoring. Phase 1 includes:
+
+1. Nano-ledger headers for each packet.
+2. Hash-linked messages.
+3. Optional on-chain anchoring via Stacks.
+
+---
+
+## 🧱 Project Structure
+
+```
+btcUDP/
+├── src/
+│   ├── client/
+│   │   ├── sender.js
+│   │   ├── receiver.js
+│   │   ├── nano_header.js
+│   │   └── stacks_anchor.js
+│   └── contract/
+│       └── nano-ledger.clar
+├── tests/
+│   ├── nano_header.test.js
+│   └── stacks_anchor.test.js
+├── docker-compose.yml
+├── Dockerfile
+├── package.json
+└── README.md
+```
+
+---
+
+## ⚙️ Installation
+
+```bash
+git clone https://github.com/vicdelgui86/btcUDP.git
+cd btcUDP
+npm install
+```
+
+Dependencies:
+```bash
+npm install mocha sinon @stacks/transactions @stacks/network node-fetch
+```
+
+---
+
+## 🔐 Environment Variables
+
+Create `.env` file:
+
+```bash
+STACKS_CONTRACT_ADDRESS=ST123YOURADDRESSHERE
+STACKS_CONTRACT_NAME=nano-ledger
+SENDER_PRIVATE_KEY=your_private_key_here
+BTCUDP_HOST=127.0.0.1
+BTCUDP_PORT=5000
+```
+
+---
+
+## 🐳 Docker Setup
+
+### Dockerfile
+```Dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+CMD ["node", "src/client/receiver.js"]
+```
+
+### docker-compose.yml
+```yaml
+version: '3.8'
+services:
+  stacks-testnet:
+    image: hirosystems/clarinet:latest
+    container_name: stacks_testnet
+    ports:
+      - '3999:3999'
+    command: clarinet develop --config clarinet.toml
+    volumes:
+      - .:/app
+
+  btcudp-receiver:
+    build: .
+    container_name: btcudp_receiver
+    environment:
+      - BTCUDP_PORT=5000
+      - BTCUDP_HOST=0.0.0.0
+    ports:
+      - '5000:5000'
+    depends_on:
+      - stacks-testnet
+
+  btcudp-sender:
+    build: .
+    container_name: btcudp_sender
+    environment:
+      - BTCUDP_HOST=btcudp-receiver
+      - BTCUDP_PORT=5000
+      - SENDER_PRIVATE_KEY=abcdef123456
+      - STACKS_CONTRACT_ADDRESS=ST123...
+      - STACKS_CONTRACT_NAME=nano-ledger
+    depends_on:
+      - btcudp-receiver
+```
+
+### Run with Docker
+```bash
+docker-compose up --build
+```
+This starts:
+- Local Stacks testnet (`clarinet`).
+- UDP receiver node.
+- UDP sender node sending & anchoring packets.
+
+---
+
+## 🔗 Contract Deployment
+
+Inside the `stacks-testnet` container:
+```bash
+clarinet deploy --network testnet src/contract/nano-ledger.clar
+```
+
+---
+
+## 🧪 Testing
+```bash
+npx mocha tests/*.test.js
+```
+Expected output:
+```
+✅ All nano_header tests passed.
+✅ Stacks anchoring mock test passed.
+```
+
+---
+
 
 
 
