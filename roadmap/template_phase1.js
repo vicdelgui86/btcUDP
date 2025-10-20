@@ -57,5 +57,13 @@ export async function sendPacket(message, critical = false) {
       console.log(`Sent: ${message}`);
       resolve();
     });
+
+    (async () => {
+  const messages = ['hello', 'world', 'from', 'btcUDP'];
+  for (const msg of messages) {
+    await sendPacket(msg);
+  }
+  client.close();
+})();
   });
 }
