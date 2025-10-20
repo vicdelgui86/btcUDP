@@ -119,7 +119,7 @@ Design decisions & considerations
 - Versioning & future upgrades: Tag packet header version etc. Document that. In Phase 1 you might include a version byte.
 
 
-File/Module Structure
+File/Module Structure (You can find this code outside this file)
 
 /src
   /client
@@ -143,7 +143,7 @@ And update package.json scripts:
 }
 
 
-Template for Phase 1
+Template for Phase 1 (you can find this code outside this file)
 
 // File: src/client/nano_header.js
 import crypto from 'crypto';
