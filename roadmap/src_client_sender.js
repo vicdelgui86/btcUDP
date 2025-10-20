@@ -30,3 +30,5 @@ export async function sendPacket(message, critical = false) {
   }
   client.close();
 })();
+
+server.bind(PORT, () => console.log(`Receiver listening on port ${PORT}`));
